@@ -1,0 +1,114 @@
+.unauthorized-container {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  padding: 20px;
+}
+
+.unauthorized-card {
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  padding: 50px 40px;
+  max-width: 500px;
+  width: 100%;
+  text-align: center;
+}
+
+.unauthorized-icon {
+  font-size: 80px;
+  margin-bottom: 20px;
+  display: block;
+}
+
+.unauthorized-card h1 {
+  color: #e74c3c;
+  font-size: 32px;
+  margin: 0 0 10px 0;
+}
+
+.unauthorized-subtitle {
+  color: #666;
+  font-size: 16px;
+  margin: 0 0 30px 0;
+}
+
+.unauthorized-info {
+  background: #f9f9f9;
+  border-radius: 8px;
+  padding: 20px;
+  margin-bottom: 30px;
+  border-left: 4px solid #e74c3c;
+  text-align: left;
+}
+
+.unauthorized-info p {
+  margin: 0 0 15px 0;
+  color: #333;
+  font-size: 14px;
+}
+
+.unauthorized-info p:last-child {
+  margin-bottom: 0;
+}
+
+.unauthorized-info strong {
+  display: block;
+  margin-bottom: 5px;
+}
+
+.role-badge {
+  background: #667eea;
+  color: white;
+  padding: 4px 12px;
+  border-radius: 20px;
+  font-weight: 600;
+  font-size: 13px;
+  display: inline-block;
+}
+
+.unauthorized-message {
+  color: #666;
+  font-style: italic;
+  background: white;
+  padding: 12px;
+  border-radius: 4px;
+}
+
+.unauthorized-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.unauthorized-actions .btn {
+  padding: 12px 28px;
+  font-size: 14px;
+  min-width: 150px;
+}
+
+@media screen and (max-width: 600px) {
+  .unauthorized-card {
+    padding: 35px 25px;
+  }
+
+  .unauthorized-icon {
+    font-size: 60px;
+    margin-bottom: 15px;
+  }
+
+  .unauthorized-card h1 {
+    font-size: 26px;
+  }
+
+  .unauthorized-actions {
+    flex-direction: column;
+  }
+
+  .unauthorized-actions .btn {
+    width: 100%;
+  }
+}
