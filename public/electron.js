@@ -151,6 +151,66 @@ ipcMain.handle('get-verification-logs', async () => {
   }
 });
 
+// Face-based verification handlers (FR-003, FR-004, FR-005)
+ipcMain.handle('find-student-by-face', async (event, { faceDescriptor, threshold = 0.6 }) => {
+  try {
+    // Validate descriptor input (Principle I - Security)
+    if (!faceDescriptor || !Array.isArray(faceDescriptor) || faceDescriptor.length === 0) {
+      return { 
+        success: false, 
+        error: 'Invalid face descriptor provided. Face detection may have failed.' 
+      };
+    }
+
+    // Validate all elements are numbers
+    if (!faceDescriptor.every(el => typeof el === 'number')) {
+      return { 
+        success: false, 
+        error: 'Face descriptor contains invalid data types.' 
+      };
+    }
+
+    const result = db.findStudentByFace(faceDescriptor, threshold);
+    return { success: true, data: result };
+  } catch (error) {
+    console.error('Error finding student by face:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('verify-guardian-by-face', async (event, { studentId, guardianDescriptor, threshold = 0.6 }) => {
+  try {
+    // Validate descriptor input (Principle I - Security)
+    if (!guardianDescriptor || !Array.isArray(guardianDescriptor) || guardianDescriptor.length === 0) {
+      return { 
+        success: false, 
+        error: 'Invalid face descriptor provided. Face detection may have failed.' 
+      };
+    }
+
+    // Validate all elements are numbers
+    if (!guardianDescriptor.every(el => typeof el === 'number')) {
+      return { 
+        success: false, 
+        error: 'Face descriptor contains invalid data types.' 
+      };
+    }
+
+    if (!studentId || typeof studentId !== 'number') {
+      return { 
+        success: false, 
+        error: 'Invalid student ID provided.' 
+      };
+    }
+
+    const result = db.verifyGuardianByFace(studentId, guardianDescriptor, threshold);
+    return { success: true, data: result };
+  } catch (error) {
+    console.error('Error verifying guardian by face:', error);
+    return { success: false, error: error.message };
+  }
+});
+
 ipcMain.handle('print-report', async (event, reportData) => {
   try {
     // Report printing will be handled by the frontend
