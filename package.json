@@ -37,6 +37,7 @@
     "build": "npm run react-build",
     "start": "npm run electron-dev",
     "dev": "npm run electron-dev",
+    "test": "node tests/face.test.js",
     "test-build": "npm run react-build",
     "prod-build": "npm run electron-build",
     "prod-build-win": "npm run react-build && electron-builder --win",
