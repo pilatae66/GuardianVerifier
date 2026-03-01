@@ -19,7 +19,8 @@ A desktop application built with Electron and React for verifying student guardi
 - **Frontend**: React 18.2.0
 - **Desktop Framework**: Electron 27.0.0
 - **Database**: SQLite3 (better-sqlite3)
-- **Face Recognition**: @vladmandic/face-api (offline, JavaScript-only)
+- **Face Recognition**: @vladmandic/face-api (offline, JavaScript-only; pinned to ^1.7.15) – uses WebGL/CPU backend to avoid WebAssembly MIME issues in the Electron/React environment
+
 - **Barcode Scanning**: html5-qrcode
 - **Styling**: CSS3
 - **Routing**: React Router 6.8.0

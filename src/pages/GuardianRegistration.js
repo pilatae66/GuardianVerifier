@@ -42,6 +42,7 @@ function GuardianRegistration() {
     } catch (err) {
       console.error('Error loading face models:', err);
       setModelsLoaded(false);
+      // errors may relate to TF backend initialization or absent model files
     }
   };
 
@@ -308,8 +309,18 @@ function GuardianRegistration() {
       }));
     }
     
-    if (!barcodeValue || !formData.firstName || !formData.lastName || !formData.contactNumber || !formData.relationship || !photo) {
-      setError('Please fill in all required fields including photo');
+    // Require basic info plus either a photo (uploaded/cropped) or a
+    // successful face descriptor from the camera scan.  The photo field is
+    // optional when a descriptor has already been captured.
+    if (
+      !barcodeValue ||
+      !formData.firstName ||
+      !formData.lastName ||
+      !formData.contactNumber ||
+      !formData.relationship ||
+      (!photo && !faceDescriptor)
+    ) {
+      setError('Please fill in all required fields and provide a photo or scan a face');
       return;
     }
 
@@ -373,7 +384,7 @@ function GuardianRegistration() {
       <div className="registration-form-wrapper">
         <form onSubmit={handleSubmit} className="registration-form">
           <div className="form-section">
-            <h2>Photo Upload</h2>
+            <h2>Photo or Face Capture</h2>
             
             {faceDetectionStatus && (
               <div className="alert alert-info">

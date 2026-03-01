@@ -187,6 +187,21 @@ class GuardianDatabase {
     }
   }
 
+  getGuardianById(guardianId) {
+    try {
+      const stmt = this.db.prepare('SELECT * FROM guardians WHERE id = ?');
+      stmt.bind([guardianId]);
+      let result = null;
+      if (stmt.step()) {
+        result = stmt.getAsObject();
+      }
+      stmt.free();
+      return result;
+    } catch (error) {
+      return null;
+    }
+  }
+
   getStudentByBarcode(barcode) {
     try {
       const stmt = this.db.prepare(`
@@ -433,6 +448,7 @@ class GuardianDatabase {
       );
       this.save();
 
+      // include guardian info so the UI can display it on success
       return {
         success: true,
         verified,
@@ -440,6 +456,15 @@ class GuardianDatabase {
         message: verified 
           ? `Guardian verified successfully for ${student.firstName} ${student.lastName}`
           : `Guardian verification failed. Face does not match for ${student.firstName} ${student.lastName}`,
+        guardian: {
+          id: guardian.id,
+          firstName: guardian.firstName,
+          lastName: guardian.lastName,
+          barcode: guardian.barcode,
+          contactNumber: guardian.contactNumber,
+          relationship: guardian.relationship,
+          photo: guardian.photo,
+        },
       };
     } catch (error) {
       throw error;

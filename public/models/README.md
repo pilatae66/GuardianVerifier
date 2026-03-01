@@ -34,5 +34,5 @@ Combined model files (all 6 models): ~100-150 MB
 
 ## Version
 
-@vladmandic/face-api v1.8.1
-Models compatible with face-api v1.8.x
+@vladmandic/face-api v1.7.15
+Models compatible with face-api v1.7.x

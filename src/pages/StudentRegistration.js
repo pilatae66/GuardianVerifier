@@ -43,6 +43,8 @@ function StudentRegistration() {
     } catch (err) {
       console.error('Error loading face models:', err);
       setModelsLoaded(false);
+      // errors here can be due to missing files or TF backend issues; face features
+      // will be disabled until models load successfully
     }
   };
 
@@ -320,8 +322,16 @@ function StudentRegistration() {
       }));
     }
     
-    if (!barcodeValue || !formData.firstName || !formData.lastName || !formData.dateOfBirth || !formData.guardianId || !photo) {
-      setError('Please fill in all fields including photo');
+    // Require basic info plus either photo or face descriptor
+    if (
+      !barcodeValue ||
+      !formData.firstName ||
+      !formData.lastName ||
+      !formData.dateOfBirth ||
+      !formData.guardianId ||
+      (!photo && !faceDescriptor)
+    ) {
+      setError('Please fill in all required fields and provide a photo or scan a face');
       return;
     }
 
@@ -383,7 +393,7 @@ function StudentRegistration() {
       <div className="registration-form-wrapper">
         <form onSubmit={handleSubmit} className="registration-form">
           <div className="form-section">
-            <h2>Photo Upload</h2>
+            <h2>Photo or Face Capture</h2>
             
             {faceDetectionStatus && (
               <div className="alert alert-info">

@@ -209,6 +209,18 @@
   text-align: left;
 }
 
+.guardian-details {
+  margin-top: 10px;
+  text-align: left;
+}
+.guardian-details p {
+  margin: 4px 0;
+}
+
+.result-actions {
+  margin-top: 15px;
+}
+
 .detail-section {
   background: #f9f9f9;
   padding: 20px;

@@ -2,7 +2,7 @@
 
 ## Phase 1: Setup (Project Initialization)
 
-- [ ] T001 [P] Add `@vladmandic/face-api` dependency to package.json
+- [ ] T001 [P] Add `@vladmandic/face-api` dependency (use version ^1.7.15 since 1.8.x is unavailable) to package.json
 - [ ] T002 [P] Create `public/models/` directory and download face model files
 
 ## Phase 2: Foundational (Blocking Prerequisites)
@@ -14,13 +14,13 @@
 
 ## Phase 3: User Story 1 – Identify Student by Face (P1)
 
-- [ ] T007 [US1] Create face-api model loader and descriptor utilities in src/utils/face.js with loadModels() and getDescriptorFromCamera() functions
-- [ ] T008 [US1] Update src/pages/GuardVerification.js: replace Html5QrcodeScanner with face scan UI for student identification; integrate findStudentByFace flow
-- [ ] T008b [US1] Implement error-handling workflows in GuardVerification.js: handle face detection failures (low light, occluded face, multiple faces), display user-friendly error messages, and offer fallback to manual barcode entry
+- [x] T007 [US1] Create face-api model loader and descriptor utilities in src/utils/face.js with loadModels() and getDescriptorFromCamera() functions
+- [x] T008 [US1] Update src/pages/GuardVerification.js: replace Html5QrcodeScanner with face scan UI for student identification; integrate findStudentByFace flow
+- [x] T008b [US1] Implement error-handling workflows in GuardVerification.js: handle face detection failures (low light, occluded face, multiple faces), display user-friendly error messages, and offer fallback to manual barcode entry
 
 ## Phase 4: User Story 2 – Verify Guardian by Face (P1)
 
-- [ ] T009 [US2] Extend src/pages/GuardVerification.js: add guardian face scan UI after student identified; integrate verifyGuardianByFace flow and display match result
+- [x] T009 [US2] Extend src/pages/GuardVerification.js: add guardian face scan UI after student identified; integrate verifyGuardianByFace flow and display match result (includes guardian detail panel and restart button)
 
 ## Phase 5: User Story 3 – Enrollment (P2)
 

@@ -124,6 +124,15 @@ ipcMain.handle('get-guardians', async () => {
   }
 });
 
+ipcMain.handle('get-guardian-by-id', async (event, { guardianId }) => {
+  try {
+    const guardian = db.getGuardianById(guardianId);
+    return { success: true, data: guardian };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
 ipcMain.handle('verify-guardian', async (event, { studentId, guardianBarcode }) => {
   try {
     const result = db.verifyGuardian(studentId, guardianBarcode);

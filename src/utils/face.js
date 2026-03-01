@@ -23,11 +23,46 @@ export async function loadModels() {
 
   try {
     console.log('[face.js] Loading face-api models...');
-    faceApi = await import('@vladmandic/face-api');
+    // dynamic import of the browser-friendly ESM build ensures we don't pull in the
+    // Node.js backend (tfjs-node) which would cause errors in the renderer process.
+    const mod = await import('@vladmandic/face-api/dist/face-api.esm.js');
+    faceApi = mod.default || mod;
+
+    if (!faceApi || !faceApi.nets || !faceApi.tf) {
+      throw new Error('Unexpected face-api import shape; missing nets or tf');
+    }
+
+    // make sure TF is ready and set a usable backend before using any tf operations
+    const tf = faceApi.tf;
+    console.log('[face.js] TensorFlow.js version', tf.version_core, 'initial backend', tf.getBackend());
+    // try to select a backend before calling tf.ready() so the wasm backend isn't
+    // automatically initialized (avoids the MIME-type compile error seen in dev)
+    try {
+      await tf.setBackend('webgl');
+      console.log('[face.js] tf backend set to webgl');
+    } catch (e) {
+      console.warn('[face.js] Unable to set WebGL backend, trying cpu', e);
+      try {
+        await tf.setBackend('cpu');
+        console.log('[face.js] tf backend set to cpu');
+      } catch (e2) {
+        console.warn('[face.js] Unable to set CPU backend either', e2);
+      }
+    }
+    try {
+      await tf.ready();
+      console.log('[face.js] tf.ready() completed, backend now', tf.getBackend());
+    } catch (e) {
+      console.warn('[face.js] tf.ready() failed:', e);
+      // continue anyway; model loading may still succeed with current backend
+    }
 
     // Load models from public/models/ directory
     // Models required: ssdMobilenetv1, faceLandmark68Net, faceRecognitionNet
-    const modelPath = `${window.location.origin}/models/`;
+    const origin = (typeof window !== 'undefined' && window.location && window.location.origin)
+      ? window.location.origin
+      : '';
+    const modelPath = `${origin}/models/`;
     
     console.log(`[face.js] Loading models from: ${modelPath}`);
     
@@ -42,6 +77,7 @@ export async function loadModels() {
     return true;
   } catch (error) {
     console.error('[face.js] Error loading models:', error);
+    // propagate a more user-friendly message without leaking internals
     throw new Error(`Failed to load face recognition models: ${error.message}`);
   }
 }
@@ -69,7 +105,12 @@ export async function getDescriptorFromImage(imageElement, minConfidence = 0.5) 
     }
 
     // Detect face and compute descriptor
-    const detections = await faceApi.detectSingleFace(canvas).withFaceLandmarks().withFaceDescriptors(minConfidence);
+    // NOTE: face-api options must be passed to detectSingleFace; withFaceDescriptor() takes no args
+    const options = new faceApi.SsdMobilenetv1Options({ minConfidence });
+    const detections = await faceApi
+      .detectSingleFace(canvas, options)
+      .withFaceLandmarks()
+      .withFaceDescriptor();
 
     if (!detections || !detections.descriptor) {
       console.warn('[face.js] No face detected in image');
@@ -210,7 +251,12 @@ export async function getDescriptorFromCamera(timeoutMs = 10000, minConfidence =
         }
 
         try {
-          const detections = await faceApi.detectSingleFace(video).withFaceLandmarks().withFaceDescriptors(minConfidence);
+          // run detection on video frames
+          const options = new faceApi.SsdMobilenetv1Options({ minConfidence });
+          const detections = await faceApi
+            .detectSingleFace(video, options)
+            .withFaceLandmarks()
+            .withFaceDescriptor();
 
           if (detections && detections.descriptor && !captured) {
             captured = true;

@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld('electron', {
   registerGuardian: (data) => ipcRenderer.invoke('register-guardian', data),
   getStudents: () => ipcRenderer.invoke('get-students'),
   getGuardians: () => ipcRenderer.invoke('get-guardians'),
+  getGuardianById: (guardianId) => ipcRenderer.invoke('get-guardian-by-id', { guardianId }),
   verifyGuardian: (studentId, guardianBarcode) =>
     ipcRenderer.invoke('verify-guardian', { studentId, guardianBarcode }),
   getStudentByBarcode: (barcode) => ipcRenderer.invoke('get-student-by-barcode', barcode),

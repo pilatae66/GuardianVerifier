@@ -11,6 +11,7 @@ function GuardVerification() {
   
   // Data state
   const [studentInfo, setStudentInfo] = useState(null);
+  const [guardianInfo, setGuardianInfo] = useState(null);
   const [guardianBarcode, setGuardianBarcode] = useState('');
   const [verificationResult, setVerificationResult] = useState(null);
   
@@ -24,6 +25,9 @@ function GuardVerification() {
   // Refs
   const scannerRef = useRef(null);
   const modelsLoadedRef = useRef(false);
+  // Normalized verification flag (supports both `verified` from face flow
+  // and `isMatch` from barcode flow)
+  const isVerified = verificationResult ? (verificationResult.verified ?? verificationResult.isMatch ?? false) : false;
 
   // Initialize face models on component mount
   useEffect(() => {
@@ -37,8 +41,10 @@ function GuardVerification() {
         setModelsLoaded(true);
         console.log('[GuardVerification] Face models loaded successfully');
       } catch (err) {
-        console.warn('[GuardVerification] Face models not available (may not have models files):', err.message);
-        setModelsLoaded(false);
+        console.warn('[GuardVerification] Face models unavailable:', err.message);
+      setModelsLoaded(false);
+      // the error may be due to missing model files or TF backend initialization
+      // user-facing message will show if attempting a scan later
       }
     };
 
@@ -56,6 +62,25 @@ function GuardVerification() {
       }
     };
   }, []);
+
+  // Load guardian details when student is identified
+  useEffect(() => {
+    if (studentInfo && studentInfo.guardianId) {
+      const loadGuardian = async () => {
+        try {
+          const result = await window.electron.getGuardianById(studentInfo.guardianId);
+          if (result && result.success) {
+            setGuardianInfo(result.data);
+          }
+        } catch (err) {
+          console.error('[GuardVerification] Error loading guardian:', err);
+        }
+      };
+      loadGuardian();
+    } else {
+      setGuardianInfo(null);
+    }
+  }, [studentInfo]);
 
   // Barcode scanner effect for student scan
   useEffect(() => {
@@ -410,8 +435,78 @@ function GuardVerification() {
         {studentInfo && (
           <div className="verify-section">
             <h2>Step 2: Verify Guardian</h2>
-            {!guardianBarcode && guardianMode === 'choice' && (
-              <div className="mode-selection">
+            
+            {verificationResult && verificationResult.verified && verificationResult.guardian ? (
+              <div className="guardian-info card" style={{ backgroundColor: '#d4edda', borderLeft: '4px solid #28a745' }}>
+                <h3 style={{ color: '#28a745' }}>✓ Guardian Verified</h3>
+                <div className="info-row">
+                  <span className="label">Name:</span>
+                  <span className="value">{verificationResult.guardian.firstName} {verificationResult.guardian.lastName}</span>
+                </div>
+                <div className="info-row">
+                  <span className="label">Barcode:</span>
+                  <span className="value mono">{verificationResult.guardian.barcode}</span>
+                </div>
+                {verificationResult.guardian.relationship && (
+                  <div className="info-row">
+                    <span className="label">Relationship:</span>
+                    <span className="value">{verificationResult.guardian.relationship}</span>
+                  </div>
+                )}
+                {verificationResult.guardian.contactNumber && (
+                  <div className="info-row">
+                    <span className="label">Contact:</span>
+                    <span className="value">{verificationResult.guardian.contactNumber}</span>
+                  </div>
+                )}
+                {verificationResult.distance !== null && (
+                  <div className="info-row" style={{ borderTop: '1px solid #c3e6cb', paddingTop: '10px', marginTop: '10px' }}>
+                    <span className="label">Match Distance:</span>
+                    <span className="value mono" style={{ color: '#28a745' }}>{verificationResult.distance.toFixed(4)}</span>
+                  </div>
+                )}
+              </div>
+            ) : verificationResult && !verificationResult.verified ? (
+              <div className="guardian-info card" style={{ backgroundColor: '#f8d7da', borderLeft: '4px solid #dc3545' }}>
+                <h3 style={{ color: '#dc3545' }}>✗ Verification Failed</h3>
+                <p style={{ marginBottom: '15px' }}>{verificationResult.message}</p>
+                {verificationResult.distance !== null && (
+                  <div className="info-row">
+                    <span className="label">Distance:</span>
+                    <span className="value mono" style={{ color: '#dc3545' }}>{verificationResult.distance.toFixed(4)}</span>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <>
+                {guardianInfo && (
+                  <div className="guardian-info card">
+                    <h3>Expected Guardian</h3>
+                    <div className="info-row">
+                      <span className="label">Name:</span>
+                      <span className="value">{guardianInfo.firstName} {guardianInfo.lastName}</span>
+                    </div>
+                    <div className="info-row">
+                      <span className="label">Barcode:</span>
+                      <span className="value mono">{guardianInfo.barcode}</span>
+                    </div>
+                    {guardianInfo.relationship && (
+                      <div className="info-row">
+                        <span className="label">Relationship:</span>
+                        <span className="value">{guardianInfo.relationship}</span>
+                      </div>
+                    )}
+                    {guardianInfo.contactNumber && (
+                      <div className="info-row">
+                        <span className="label">Contact:</span>
+                        <span className="value">{guardianInfo.contactNumber}</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+                
+{!guardianBarcode && guardianMode === 'choice' && (
+              <div className="mode-selection" style={{ marginTop: '15px' }}>
                 <button
                   className="btn btn-primary btn-large"
                   onClick={handleGuardianFaceScan}
@@ -456,21 +551,45 @@ function GuardVerification() {
                 </button>
               </div>
             )}
+              </>
+            )}
           </div>
         )}
       </div>
 
       {/* Verification Result */}
       {verificationResult && (
-        <div className={`verification-result ${verificationResult.verified ? 'success' : 'failure'}`}>
+        <div className={`verification-result ${isVerified ? 'success' : 'failure'}`}>
           <div className="result-icon">
-            {verificationResult.verified ? '✓' : '✗'}
+            {isVerified ? '✓' : '✗'}
           </div>
           <h3>{verificationResult.message}</h3>
-          {verificationResult.distance !== null &&<div className="result-details">
+
+          {isVerified && verificationResult.guardian && (
+            <div className="guardian-details" style={{ marginTop: '10px', textAlign: 'left' }}>
+              <p><strong>Guardian:</strong> {verificationResult.guardian.firstName} {verificationResult.guardian.lastName}</p>
+              <p><strong>Barcode:</strong> <span className="mono">{verificationResult.guardian.barcode}</span></p>
+              {verificationResult.guardian.relationship && (
+                <p><strong>Relationship:</strong> {verificationResult.guardian.relationship}</p>
+              )}
+              {verificationResult.guardian.contactNumber && (
+                <p><strong>Contact:</strong> {verificationResult.guardian.contactNumber}</p>
+              )}
+            </div>
+          )}
+
+          {verificationResult.distance !== null && (
+            <div className="result-details">
               <p className="distance-metric">Match Distance: {verificationResult.distance?.toFixed(4)}</p>
             </div>
-          }
+          )}
+
+          {/* restart button inside result panel */}
+          <div className="result-actions" style={{ marginTop: '15px' }}>
+            <button className="btn btn-primary btn-small" onClick={resetVerification}>
+              ↻ New Verification
+            </button>
+          </div>
         </div>
       )}
 
