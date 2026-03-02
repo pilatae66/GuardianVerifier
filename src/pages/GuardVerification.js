@@ -14,6 +14,8 @@ function GuardVerification() {
   const [guardianInfo, setGuardianInfo] = useState(null);
   const [guardianBarcode, setGuardianBarcode] = useState('');
   const [verificationResult, setVerificationResult] = useState(null);
+  // track how student was identified so we can control guardian display
+  const [identMethod, setIdentMethod] = useState(null); // 'face' or 'barcode'
   
   // Loading/UI feedback state
   const [loading, setLoading] = useState(false);
@@ -63,13 +65,14 @@ function GuardVerification() {
     };
   }, []);
 
-  // Load guardian details when student is identified
+  // Load guardian details when student is identified via face (hide for barcode until guardian verified)
   useEffect(() => {
-    if (studentInfo && studentInfo.guardianId) {
+    if (studentInfo && studentInfo.guardianId && identMethod === 'face') {
       const loadGuardian = async () => {
         try {
           const result = await window.electron.getGuardianById(studentInfo.guardianId);
           if (result && result.success) {
+            console.debug('[GuardVerification] loaded guardian for student:', result.data);
             setGuardianInfo(result.data);
           }
         } catch (err) {
@@ -78,9 +81,15 @@ function GuardVerification() {
       };
       loadGuardian();
     } else {
+      // clear guardian info unless verification later populates it
       setGuardianInfo(null);
     }
-  }, [studentInfo]);
+  }, [studentInfo, identMethod]);
+
+  // Debug: watch guardianInfo changes
+  useEffect(() => {
+    console.debug('[GuardVerification] guardianInfo changed:', guardianInfo, 'verificationResult:', verificationResult);
+  }, [guardianInfo, verificationResult]);
 
   // Barcode scanner effect for student scan
   useEffect(() => {
@@ -102,6 +111,10 @@ function GuardVerification() {
               await handleStudentBarcode(decodedText);
             },
             (error) => {
+              // ignore frequent NotFoundException when no code is in view
+              if (error && error.name && error.name.includes('NotFoundException')) {
+                return;
+              }
               console.warn('Scanner error:', error);
             }
           );
@@ -138,11 +151,20 @@ function GuardVerification() {
 
           scanner.render(
             async (decodedText) => {
-              console.log('Guardian barcode scanned:', decodedText);
+              console.log('[GuardVerification] Guardian barcode scanned:', decodedText);
+              console.log('[GuardVerification] Current guardianMode:', guardianMode);
+              console.log('[GuardVerification] Setting guardianBarcode state');
               scanner.clear();
               setGuardianMode('choice');
               scannerRef.current = null;
               setGuardianBarcode(decodedText);
+              console.log('[GuardVerification] After setGuardianBarcode, should be:', decodedText);
+              // automatically start verification if the student has already been identified
+              if (studentInfo) {
+                console.log('[GuardVerification] auto-triggering verifyGuardianBarcode due to scan');
+                // pass decodedText directly to avoid race with React state
+                verifyGuardianBarcode(decodedText);
+              }
             },
             (error) => {
               console.warn('Guardian scanner error:', error);
@@ -201,6 +223,7 @@ function GuardVerification() {
       if (data.success && data.student) {
         console.log('[GuardVerification] Student identified:', data.student);
         setStudentInfo(data.student);
+        setIdentMethod('face');
         setSuccess(`✓ Student identified: ${data.student.firstName} ${data.student.lastName}`);
         setVerificationMode('choice');
       } else {
@@ -234,6 +257,7 @@ function GuardVerification() {
       const result = await window.electron.getStudentByBarcode(barcode);
       if (result.success && result.data) {
         setStudentInfo(result.data);
+        setIdentMethod('barcode');
         setSuccess(`✓ Student loaded: ${result.data.firstName} ${result.data.lastName}`);
       } else {
         setError('No student found with this barcode. Please register first.');
@@ -269,11 +293,22 @@ function GuardVerification() {
 
       setFaceDetectionStatus('Verifying guardian...');
       console.log('[GuardVerification] Guardian face captured, verifying...');
+      console.debug('[GuardVerification] Descriptor length:', descriptor ? descriptor.length : 'null');
+      console.debug('[GuardVerification] Student ID:', studentInfo.id);
 
       // Call face-based guardian verification
-      const result = await window.electron.verifyGuardianByFace(studentInfo.id, descriptor, 0.6);
+      console.debug('[GuardVerification] About to call verifyGuardianByFace IPC...');
+      let result;
+      try {
+        result = await window.electron.verifyGuardianByFace(studentInfo.id, descriptor, 0.6);
+        console.debug('[GuardVerification] IPC call returned, result:', result);
+      } catch (ipcErr) {
+        console.error('[GuardVerification] IPC call threw error:', ipcErr);
+        throw ipcErr;
+      }
 
       if (!result.success) {
+        console.error('[GuardVerification] guardian verify IPC returned error', result);
         setError(result.error || 'Failed to verify guardian');
         setGuardianMode('choice');
         return;
@@ -281,11 +316,19 @@ function GuardVerification() {
 
       const { data } = result;
       setVerificationResult(data);
+      // ensure Step 2 shows the returned guardian details immediately
+      if (data && data.guardian) {
+        console.debug('[GuardVerification] setting guardianInfo from face result:', data.guardian);
+        setGuardianInfo(data.guardian);
+      } else {
+        console.debug('[GuardVerification] face result had no guardian object', data);
+      }
       setGuardianMode('choice');
 
       if (data.verified) {
         setSuccess(`✓ ${data.message}`);
       } else {
+        console.log('[GuardVerification] guardian verification result (face):', data);
         setError(`✗ ${data.message}`);
       }
     } catch (err) {
@@ -306,30 +349,75 @@ function GuardVerification() {
   };
 
   // Verify using barcode (existing flow)
-  const verifyGuardianBarcode = async () => {
-    if (!studentInfo || !guardianBarcode) {
-      setError('Please scan both student and guardian barcodes');
+  // `overrideBarcode` allows callers (e.g. auto-trigger after scan) to pass the
+  // value directly instead of relying on the React state, which may not have
+  // updated yet due to batching. If no override is provided we fall back to the
+  // `guardianBarcode` state value.
+  const verifyGuardianBarcode = async (overrideBarcode) => {
+    console.log('[GuardVerification.verifyGuardianBarcode] Called');
+    console.log('[GuardVerification.verifyGuardianBarcode] studentInfo:', studentInfo);
+
+    const code = overrideBarcode !== undefined ? overrideBarcode : guardianBarcode;
+    console.log('[GuardVerification.verifyGuardianBarcode] using barcode:', code);
+    console.log('[GuardVerification.verifyGuardianBarcode] verificationResult:', verificationResult);
+
+    if (!studentInfo) {
+      console.error('[GuardVerification.verifyGuardianBarcode] Missing student information');
+      setError('Please identify a student first');
       return;
     }
 
+    // we intentionally do **not** short‑circuit when `code` is falsy so that the
+    // database layer can record the attempt and provide us with the proper
+    // failure message.  It will throw an error which we catch below.
     setLoading(true);
     setError('');
     setSuccess('');
 
+    // determine whether we need to override the final message
+    const userMessageForMissing = !code ? 'Please scan both student and guardian barcodes' : null;
+
     try {
-      const result = await window.electron.verifyGuardian(studentInfo.id, guardianBarcode);
-      if (result.success) {
+      console.log('[GuardVerification.verifyGuardianBarcode] Calling window.electron.verifyGuardian...');
+      const result = await window.electron.verifyGuardian(studentInfo.id, code);
+      console.log('[GuardVerification.verifyGuardianBarcode] Result received:', result);
+      console.log('[GuardVerification.verifyGuardianBarcode] Result type:', typeof result);
+      console.log('[GuardVerification.verifyGuardianBarcode] Result.success:', result?.success);
+      
+      if (result && result.success) {
+        console.log('[GuardVerification.verifyGuardianBarcode] Verification succeeded, isMatch:', result.data?.isMatch);
         setVerificationResult(result.data);
+        // ensure Step 2 shows the returned guardian details immediately
+        if (result.data && result.data.guardian) {
+          console.debug('[GuardVerification.verifyGuardianBarcode] setting guardianInfo from barcode result:', result.data.guardian);
+          setGuardianInfo(result.data.guardian);
+        } else {
+          console.debug('[GuardVerification.verifyGuardianBarcode] barcode result had no guardian object', result.data);
+        }
         if (result.data.isMatch) {
+          console.log('[GuardVerification.verifyGuardianBarcode] Guardian MATCHED');
           setSuccess('✓ Guardian verified successfully!');
         } else {
+          console.log('[GuardVerification.verifyGuardianBarcode] guardian verification result (barcode) - MISMATCH:', result.data);
           setError('✗ Guardian does not match student record!');
         }
+      } else if (result && !result.success) {
+        console.error('[GuardVerification.verifyGuardianBarcode] Verification failed, error:', result.error);
+        const errorMsg = result.error || 'Verification failed. Guardian barcode could not be verified.';
+        console.log('[GuardVerification.verifyGuardianBarcode] Setting error message:', errorMsg);
+        setError(userMessageForMissing || errorMsg);
       } else {
-        setError(result.error || 'Verification failed');
+        console.error('[GuardVerification.verifyGuardianBarcode] Unexpected result structure:', result);
+        setError(userMessageForMissing || 'Unexpected error during verification');
       }
     } catch (err) {
-      setError('Error during verification: ' + err.message);
+      console.error('[GuardVerification.verifyGuardianBarcode] Exception thrown:', err);
+      // always prefer the friendly message if we set it earlier
+      if (userMessageForMissing) {
+        setError(userMessageForMissing);
+      } else {
+        setError('Error during verification: ' + (err.message || String(err)));
+      }
     } finally {
       setLoading(false);
     }
@@ -339,6 +427,7 @@ function GuardVerification() {
     setStudentInfo(null);
     setGuardianBarcode('');
     setVerificationResult(null);
+    setGuardianInfo(null);
     setError('');
     setSuccess('');
     setVerificationMode('choice');
@@ -382,6 +471,20 @@ function GuardVerification() {
                   </button>
                 </div>
               )}
+              {(verificationMode === 'face-student') && (
+                <div style={{ textAlign: 'center', padding: '20px' }}>
+                  <p style={{ marginBottom: '15px', fontSize: '14px', color: '#666' }}>
+                    ⏳ {faceDetectionStatus || 'Initializing camera...'}
+                  </p>
+                  <button
+                    className="btn btn-secondary"
+                    onClick={() => setVerificationMode('barcode')}
+                    disabled={loading}
+                  >
+                    📋 Switch to Barcode
+                  </button>
+                </div>
+              )}
               {verificationMode === 'barcode' && (
                 <>
                   <div id="qr-scanner" className="scanner-container"></div>
@@ -389,7 +492,7 @@ function GuardVerification() {
                     className="btn btn-secondary mt-10"
                     onClick={() => setVerificationMode('choice')}
                   >
-                    ← Back
+                    ← Back to Face Scan
                   </button>
                 </>
               )}
@@ -461,10 +564,15 @@ function GuardVerification() {
                 )}
                 {verificationResult.distance !== null && (
                   <div className="info-row" style={{ borderTop: '1px solid #c3e6cb', paddingTop: '10px', marginTop: '10px' }}>
-                    <span className="label">Match Distance:</span>
-                    <span className="value mono" style={{ color: '#28a745' }}>{verificationResult.distance.toFixed(4)}</span>
+                    <span className="label">Match Percentile:</span>
+                    <span className="value mono" style={{ color: '#28a745' }}>{((1 - verificationResult.distance) * 100).toFixed(1)}%</span>
                   </div>
                 )}
+                <div style={{ marginTop: '15px' }}>
+                  <button className="btn btn-primary" style={{ width: '100%' }} onClick={resetVerification}>
+                    ↻ New Verification
+                  </button>
+                </div>
               </div>
             ) : verificationResult && !verificationResult.verified ? (
               <div className="guardian-info card" style={{ backgroundColor: '#f8d7da', borderLeft: '4px solid #dc3545' }}>
@@ -479,7 +587,7 @@ function GuardVerification() {
               </div>
             ) : (
               <>
-                {guardianInfo && (
+                {guardianInfo && (verificationResult && verificationResult.verified) && (
                   <div className="guardian-info card">
                     <h3>Expected Guardian</h3>
                     <div className="info-row">
@@ -557,62 +665,20 @@ function GuardVerification() {
         )}
       </div>
 
-      {/* Verification Result */}
-      {verificationResult && (
-        <div className={`verification-result ${isVerified ? 'success' : 'failure'}`}>
-          <div className="result-icon">
-            {isVerified ? '✓' : '✗'}
-          </div>
-          <h3>{verificationResult.message}</h3>
-
-          {isVerified && verificationResult.guardian && (
-            <div className="guardian-details" style={{ marginTop: '10px', textAlign: 'left' }}>
-              <p><strong>Guardian:</strong> {verificationResult.guardian.firstName} {verificationResult.guardian.lastName}</p>
-              <p><strong>Barcode:</strong> <span className="mono">{verificationResult.guardian.barcode}</span></p>
-              {verificationResult.guardian.relationship && (
-                <p><strong>Relationship:</strong> {verificationResult.guardian.relationship}</p>
-              )}
-              {verificationResult.guardian.contactNumber && (
-                <p><strong>Contact:</strong> {verificationResult.guardian.contactNumber}</p>
-              )}
-            </div>
-          )}
-
-          {verificationResult.distance !== null && (
-            <div className="result-details">
-              <p className="distance-metric">Match Distance: {verificationResult.distance?.toFixed(4)}</p>
-            </div>
-          )}
-
-          {/* restart button inside result panel */}
-          <div className="result-actions" style={{ marginTop: '15px' }}>
-            <button className="btn btn-primary btn-small" onClick={resetVerification}>
-              ↻ New Verification
-            </button>
-          </div>
-        </div>
-      )}
-
       {/* Action Buttons */}
       {studentInfo && guardianBarcode && !verificationResult && (
         <div className="action-buttons">
           <button
             className="btn btn-success btn-large"
-            onClick={verifyGuardianBarcode}
+            onClick={() => verifyGuardianBarcode()}
             disabled={loading}
           >
             {loading ? 'Verifying...' : '✓ Verify Guardian (Barcode)'}
           </button>
         </div>
       )}
-
-      {verificationResult && (
-        <div className="action-buttons">
-          <button className="btn btn-primary btn-large" onClick={resetVerification}>
-            ↻ Start New Verification
-          </button>
-        </div>
-      )}
+      {/* note: verification now auto-triggers after a barcode scan so user doesn't always
+          need to hit the button; button remains for manual retry or fallback */}
     </div>
   );
 }

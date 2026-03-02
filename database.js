@@ -4,10 +4,30 @@ const { app } = require('electron');
 const initSqlJs = require('sql.js');
 
 class GuardianDatabase {
-  constructor() {
-    this.dbPath = path.join(app.getPath('userData'), 'guardian-system.db');
+  /**
+   * @param {object} [options]
+   * @param {string} [options.userDataPath] - optional directory to use instead of Electron userData (for testing only)
+   */
+  constructor(options = {}) {
+    let userDataDir;
+    
+    if (options.userDataPath) {
+      // Explicit override for testing
+      userDataDir = options.userDataPath;
+      console.log('[database.js] Using TEST database path:', options.userDataPath);
+    } else if (app && app.getPath) {
+      // Production: always use Electron userData
+      userDataDir = app.getPath('userData');
+      console.log('[database.js] Using Electron userData path:', userDataDir);
+    } else {
+      // Should never happen in production Electron app
+      throw new Error('Electron app object not available. Cannot determine userData path.');
+    }
+    
+    this.dbPath = path.join(userDataDir, 'guardian-system.db');
     this.db = null;
     this.SQL = null;
+    console.log('[database.js] Database file location:', this.dbPath);
   }
 
   async initialize() {
@@ -56,9 +76,9 @@ class GuardianDatabase {
         CREATE TABLE IF NOT EXISTS verification_logs (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           studentId INTEGER NOT NULL,
-          guardianId INTEGER NOT NULL,
-          studentBarcode TEXT NOT NULL,
-          guardianBarcode TEXT NOT NULL,
+          guardianId INTEGER,
+          studentBarcode TEXT,
+          guardianBarcode TEXT,
           verificationStatus TEXT,
           distance REAL,
           verificationTime DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -108,6 +128,56 @@ class GuardianDatabase {
         this.db.run('ALTER TABLE verification_logs ADD COLUMN distance REAL');
       } catch (e) {
         // Column already exists, ignore
+      }
+
+      // Relax NOT NULL constraints for verification_logs if table has old schema
+      // We need to check if guardianId or guardianBarcode have NOT NULL constraints
+      // Since SQLite doesn't support dropping constraints directly, we recreate the table if needed
+      try {
+        const tableInfo = this.db.exec("PRAGMA table_info(verification_logs)");
+        const hasNullableGuardianId = tableInfo.length > 0 && 
+          tableInfo[0].values.find(col => col[1] === 'guardianId' && col[3] === 0); // notnull=0 means nullable
+        
+        if (!hasNullableGuardianId) {
+          // Table needs migration: recreate with nullable columns
+          console.log('[database.js] Migrating verification_logs to allow nullable guardianId/guardianBarcode');
+          
+          // Save existing data
+          const existingData = this.db.exec('SELECT * FROM verification_logs');
+          const existingRows = existingData.length > 0 ? existingData[0].values : [];
+          
+          // Drop old table
+          this.db.run('DROP TABLE verification_logs');
+          
+          // Recreate with correct schema
+          this.db.run(`
+            CREATE TABLE verification_logs (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              studentId INTEGER NOT NULL,
+              guardianId INTEGER,
+              studentBarcode TEXT,
+              guardianBarcode TEXT,
+              verificationStatus TEXT,
+              distance REAL,
+              verificationTime DATETIME DEFAULT CURRENT_TIMESTAMP,
+              notes TEXT
+            )
+          `);
+          
+          // Restore data if any existed
+          if (existingRows.length > 0) {
+            for (const row of existingRows) {
+              this.db.run(
+                `INSERT INTO verification_logs 
+                 (id, studentId, guardianId, studentBarcode, guardianBarcode, verificationStatus, distance, verificationTime, notes)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                row
+              );
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('[database.js] Migration warning (non-critical):', e.message);
       }
     } catch (error) {
       console.warn('Migration warning (non-critical):', error.message);
@@ -224,6 +294,8 @@ class GuardianDatabase {
   }
 
   verifyGuardian(studentId, guardianBarcode) {
+    console.log('[database.js] verifyGuardian called with studentId:', studentId, 'guardianBarcode:', guardianBarcode);
+    console.log('[database.js] database state:', { hasDb: !!this.db, hasSave: !!this.save });
     try {
       // Get student info
       const stmtStudent = this.db.prepare('SELECT * FROM students WHERE id = ?');
@@ -231,36 +303,83 @@ class GuardianDatabase {
       let student = null;
       if (stmtStudent.step()) {
         student = stmtStudent.getAsObject();
+        console.log('[database.js] found student:', student.firstName, student.lastName);
+      } else {
+        console.log('[database.js] student NOT found with id:', studentId);
       }
       stmtStudent.free();
       
       if (!student) {
-        throw new Error('Student not found');
+        // Log failure when student not found
+        console.log('[database.js] student not found, logging failure to verification_logs');
+        try {
+          this.db.run(
+            `INSERT INTO verification_logs (studentId, guardianId, studentBarcode, guardianBarcode, verificationStatus, notes)
+             VALUES (?, ?, ?, ?, ?, ?)`,
+            [studentId, null, null, guardianBarcode, 'failure', 'Barcode verification failed: student not found']
+          );
+          console.log('[database.js] Successfully inserted failure log for missing student');
+          this.save();
+          console.log('[database.js] Database saved');
+        } catch (logErr) {
+          console.error('[database.js] Failed to log missing student:', logErr);
+        }
+        const err = new Error('Student not found');
+        err.alreadyLogged = true;
+        throw err;
       }
 
       // Get guardian info by barcode
+      console.log('[database.js] Looking for guardian with barcode:', guardianBarcode);
       const stmtGuardian = this.db.prepare('SELECT * FROM guardians WHERE barcode = ?');
       stmtGuardian.bind([guardianBarcode]);
       let guardian = null;
       if (stmtGuardian.step()) {
         guardian = stmtGuardian.getAsObject();
+        console.log('[database.js] found guardian:', guardian.firstName, guardian.lastName);
+      } else {
+        console.log('[database.js] guardian NOT found with barcode:', guardianBarcode);
       }
       stmtGuardian.free();
       
       if (!guardian) {
-        throw new Error('Guardian barcode not found in system');
+        // Log failure when guardian barcode not found
+        console.log('[database.js] guardian barcode not found, logging failure to verification_logs');
+        try {
+          this.db.run(
+            `INSERT INTO verification_logs (studentId, guardianId, studentBarcode, guardianBarcode, verificationStatus, notes)
+             VALUES (?, ?, ?, ?, ?, ?)`,
+            [studentId, null, student.barcode, guardianBarcode, 'failure', 'Barcode verification failed: guardian barcode not found']
+          );
+          console.log('[database.js] Successfully inserted failure log for missing guardian');
+          this.save();
+          console.log('[database.js] Database saved');
+        } catch (logErr) {
+          console.error('[database.js] Failed to log missing guardian:', logErr);
+        }
+        const err = new Error('Guardian barcode not found in system');
+        err.alreadyLogged = true;
+        throw err;
       }
 
       // Verify if the guardian matches the student's registered guardian
       const isMatch = student.guardianId === guardian.id;
+      console.log('[database.js] guardian match result:', isMatch, 'student guardian id:', student.guardianId, 'guardian id:', guardian.id);
 
       // Log the verification attempt
-      this.db.run(
-        `INSERT INTO verification_logs (studentId, guardianId, studentBarcode, guardianBarcode, verificationStatus)
-         VALUES (?, ?, ?, ?, ?)`,
-        [studentId, guardian.id, student.barcode, guardianBarcode, isMatch ? 'SUCCESS' : 'FAILED']
-      );
-      this.save();
+      console.log('[database.js] logging verification attempt to verification_logs, status:', isMatch ? 'success' : 'failure');
+      try {
+        this.db.run(
+          `INSERT INTO verification_logs (studentId, guardianId, studentBarcode, guardianBarcode, verificationStatus, notes)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+          [studentId, guardian.id, student.barcode, guardianBarcode, isMatch ? 'success' : 'failure', isMatch ? 'Barcode verification successful' : 'Guardian barcode does not match student record']
+        );
+        console.log('[database.js] Log inserted, saving...');
+        this.save();
+        console.log('[database.js] Database saved after log insert');
+      } catch (logErr) {
+        console.error('[database.js] Failed to log verification attempt:', logErr);
+      }
 
       return {
         isMatch,
@@ -280,6 +399,27 @@ class GuardianDatabase {
         message: isMatch ? 'Guardian verified successfully' : 'Guardian does not match student record',
       };
     } catch (error) {
+      console.error('[database.js] verifyGuardian error', error);
+      // Only log if we haven't already logged this failure
+      if (!error.alreadyLogged) {
+        try {
+          this.db.run(
+            `INSERT INTO verification_logs (studentId, guardianId, studentBarcode, guardianBarcode, verificationStatus, notes)
+             VALUES (?, ?, ?, ?, ?, ?)`,
+            [
+              studentId,
+              null,
+              null,
+              guardianBarcode,
+              'failure',
+              `Exception during guardian barcode verification: ${error.message}`,
+            ]
+          );
+          this.save();
+        } catch (e) {
+          console.error('[database.js] failed to log error during verifyGuardian', e);
+        }
+      }
       throw error;
     }
   }
@@ -291,8 +431,8 @@ class GuardianDatabase {
                s.firstName as studentFirstName, s.lastName as studentLastName,
                g.firstName as guardianFirstName, g.lastName as guardianLastName
         FROM verification_logs vl
-        JOIN students s ON vl.studentId = s.id
-        JOIN guardians g ON vl.guardianId = g.id
+        LEFT JOIN students s ON vl.studentId = s.id
+        LEFT JOIN guardians g ON vl.guardianId = g.id
         ORDER BY vl.verificationTime DESC
       `);
       const results = [];
@@ -382,13 +522,22 @@ class GuardianDatabase {
 
   // Face-based guardian verification: Compare captured guardian face with stored guardian descriptor
   verifyGuardianByFace(studentId, capturedGuardianDescriptor, threshold = 0.6) {
+    console.log('[database.js] verifyGuardianByFace called, studentId:', studentId, 'descriptor length:', capturedGuardianDescriptor ? capturedGuardianDescriptor.length : 'null');
     try {
       // Get student to find assigned guardian
       const studentStmt = this.db.prepare('SELECT * FROM students WHERE id = ?');
+      console.log('[database.js] prepared select student statement');
       studentStmt.bind([studentId]);
       
       if (!studentStmt.step()) {
         studentStmt.free();
+        // log failure
+        this.db.run(
+          `INSERT INTO verification_logs (studentId, guardianId, studentBarcode, guardianBarcode, verificationStatus, distance, notes)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          [studentId, null, null, null, 'failure', null, 'Face verification failed: student not found']
+        );
+        this.save();
         return {
           success: false,
           verified: false,
@@ -399,9 +548,11 @@ class GuardianDatabase {
       
       const student = studentStmt.getAsObject();
       studentStmt.free();
+      console.log('[database.js] found student:', student.firstName, student.lastName, 'guardianId:', student.guardianId);
 
       // Get guardian record
       const guardianStmt = this.db.prepare('SELECT * FROM guardians WHERE id = ?');
+      console.log('[database.js] prepared select guardian statement');
       guardianStmt.bind([student.guardianId]);
       
       if (!guardianStmt.step()) {
@@ -416,9 +567,12 @@ class GuardianDatabase {
       
       const guardian = guardianStmt.getAsObject();
       guardianStmt.free();
+      console.log('[database.js] found guardian:', guardian.firstName, guardian.lastName, 'has descriptor:', !!guardian.faceDescriptor);
 
       // Compare face descriptors
+      console.log('[database.js] comparing descriptors...');
       const distance = this.calculateDescriptorDistance(capturedGuardianDescriptor, guardian.faceDescriptor);
+      console.log('[database.js] distance calculated:', distance);
 
       if (distance === null) {
         return {
@@ -432,6 +586,7 @@ class GuardianDatabase {
       const verified = distance <= threshold;
 
       // Log verification attempt (required by FR-005, SC-004)
+      console.log('[database.js] verified:', verified, 'logging to verification_logs...');
       this.db.run(
         `INSERT INTO verification_logs 
          (studentId, guardianId, studentBarcode, guardianBarcode, verificationStatus, distance, notes)
@@ -447,6 +602,7 @@ class GuardianDatabase {
         ]
       );
       this.save();
+      console.log('[database.js] verification logged, returning result');
 
       // include guardian info so the UI can display it on success
       return {
@@ -467,6 +623,27 @@ class GuardianDatabase {
         },
       };
     } catch (error) {
+      console.error('[database.js] verifyGuardianByFace error', error);
+      // ensure the failure gets recorded as well
+      try {
+        this.db.run(
+          `INSERT INTO verification_logs 
+           (studentId, guardianId, studentBarcode, guardianBarcode, verificationStatus, distance, notes)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          [
+            studentId,
+            null,
+            null,
+            null,
+            'failure',
+            null,
+            `Exception during guardian face verification: ${error.message}`,
+          ]
+        );
+        this.save();
+      } catch (e) {
+        console.error('[database.js] failed to log error during verifyGuardianByFace', e);
+      }
       throw error;
     }
   }

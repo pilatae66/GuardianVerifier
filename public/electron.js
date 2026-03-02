@@ -134,11 +134,14 @@ ipcMain.handle('get-guardian-by-id', async (event, { guardianId }) => {
 });
 
 ipcMain.handle('verify-guardian', async (event, { studentId, guardianBarcode }) => {
+  console.log('[electron.js] IPC: verify-guardian called with studentId:', studentId, 'barcode:', guardianBarcode);
   try {
     const result = db.verifyGuardian(studentId, guardianBarcode);
-    return { success: true, data: result };
+    console.log('[electron.js] verifyGuardian returned:', result);
+    return { success: true, data: result, isMatch: result.isMatch };
   } catch (error) {
-    return { success: false, error: error.message };
+    console.error('[electron.js] verifyGuardian threw error:', error.message);
+    return { success: false, error: error.message, isMatch: false };
   }
 });
 
@@ -188,9 +191,11 @@ ipcMain.handle('find-student-by-face', async (event, { faceDescriptor, threshold
 });
 
 ipcMain.handle('verify-guardian-by-face', async (event, { studentId, guardianDescriptor, threshold = 0.6 }) => {
+  console.log('[electron.js] IPC: verify-guardian-by-face called, studentId:', studentId, 'descriptor length:', guardianDescriptor ? guardianDescriptor.length : 'null', 'threshold:', threshold);
   try {
     // Validate descriptor input (Principle I - Security)
     if (!guardianDescriptor || !Array.isArray(guardianDescriptor) || guardianDescriptor.length === 0) {
+      console.log('[electron.js] IPC: descriptor validation failed');
       return { 
         success: false, 
         error: 'Invalid face descriptor provided. Face detection may have failed.' 
@@ -212,7 +217,9 @@ ipcMain.handle('verify-guardian-by-face', async (event, { studentId, guardianDes
       };
     }
 
+    console.log('[electron.js] IPC: calling db.verifyGuardianByFace...');
     const result = db.verifyGuardianByFace(studentId, guardianDescriptor, threshold);
+    console.log('[electron.js] IPC: db returned, result.success:', result.success, 'result.verified:', result.verified);
     return { success: true, data: result };
   } catch (error) {
     console.error('Error verifying guardian by face:', error);

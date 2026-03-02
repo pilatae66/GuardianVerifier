@@ -293,6 +293,103 @@ try {
   console.error('✗ Test 4.2 failed:', err.message);
 }
 
+// Test Suite 5: Database Logging
+console.log('\n=== Test Suite 5: Database Logging ===');
+const GuardianDatabase = require('../database.js');
+(async () => {
+  try {
+    const db = new GuardianDatabase({ userDataPath: '.' });
+    await db.initialize();
+    db.db.run('DELETE FROM verification_logs');
+    const res1 = await db.verifyGuardianByFace(12345, [0.1, 0.2]);
+    assert.strictEqual(res1.success, false);
+    const logs1 = db.db.exec('SELECT * FROM verification_logs')[0]?.values || [];
+    assert(logs1.length === 1, 'Should log one failure for unknown student');
+    // Columns: id, studentId, guardianId, studentBarcode, guardianBarcode, verificationStatus, distance
+    // Index:   0,  1,          2,         3,               4,              5,                 6
+    assert(logs1[0][6] === null, 'distance should be null when student not found');
+    console.log('✓ Test 5.1 passed: Unknown student logged as failure');
+
+    // Prepare records for a mismatch case
+    db.db.run('DELETE FROM students');
+    db.db.run('DELETE FROM guardians');
+    // Insert student and guardian with different face descriptors of same length
+    db.db.run("INSERT INTO students (id,barcode,firstName,lastName,dateOfBirth,guardianId) VALUES (1,'S1','Foo','Bar','2010-01-01',1)");
+    const capturedDesc = [0.1, 0.2]; // Length 2
+    const guardianDescriptor = JSON.stringify([0.9, 0.95]); // Very different - will have distance > 1.0
+    db.db.run("INSERT INTO guardians (id,barcode,firstName,lastName,contactNumber,faceDescriptor) VALUES (1,'G1','Baz','Qux','555-5678',?)", [guardianDescriptor]);
+    db.db.run('DELETE FROM verification_logs');
+    const res2 = await db.verifyGuardianByFace(1, capturedDesc);
+    assert(res2.success && res2.verified === false, 'should return verified=false for non-matching descriptor');
+    const logs2 = db.db.exec('SELECT * FROM verification_logs')[0]?.values || [];
+    assert(logs2.length === 1, 'should log mismatch attempt');
+    assert(logs2[0][6] != null, 'distance should be recorded');
+    console.log('✓ Test 5.2 passed: Mismatch verification logged');
+    
+    // Test 5.3: Barcode-based verification with mismatch
+    db.db.run('DELETE FROM students');
+    db.db.run('DELETE FROM guardians');
+    db.db.run("INSERT INTO students (id,barcode,firstName,lastName,dateOfBirth,guardianId) VALUES (1,'S1','Foo','Bar','2010-01-01',1)");
+    db.db.run("INSERT INTO guardians (id,barcode,firstName,lastName,contactNumber) VALUES (1,'G1','Baz','Qux','555-5678')");
+    db.db.run("INSERT INTO guardians (id,barcode,firstName,lastName,contactNumber) VALUES (2,'G2','Wrong','Guardian','555-9999')");
+    db.db.run('DELETE FROM verification_logs');
+    
+    const res3 = db.verifyGuardian(1, 'G2'); // Student linked to G1, scanning G2
+    assert(res3.isMatch === false, 'should return isMatch=false for mismatched barcode');
+    const logs3 = db.db.exec('SELECT * FROM verification_logs')[0]?.values || [];
+    assert(logs3.length === 1, 'should log barcode mismatch attempt');
+    assert(logs3[0][5] === 'failure', 'status should be failure');
+    console.log('✓ Test 5.3 passed: Barcode verification mismatch logged');
+    
+    // Test 5.4: Unknown guardian barcode
+    db.db.run('DELETE FROM verification_logs');
+    let guardianNotFoundThrown = false;
+    try {
+      db.verifyGuardian(1, 'G999'); // Unknown barcode
+    } catch (e) {
+      // Expected error
+      guardianNotFoundThrown = true;
+    }
+    assert(guardianNotFoundThrown, 'should throw error for unknown guardian');
+    const logs4 = db.db.exec('SELECT * FROM verification_logs')[0]?.values || [];
+    assert(logs4.length === 1, `should log unknown barcode failure, but got ${logs4.length} entries`);
+    assert(logs4[0][5] === 'failure', 'status should be failure');
+    console.log('✓ Test 5.4 passed: Unknown guardian barcode logged as failure');
+    
+    // Test 5.5: Scanning a student QR as guardian should also log failure
+    db.db.run('DELETE FROM verification_logs');
+    // reuse student barcode from above
+    db.db.run("INSERT INTO guardians (id,barcode,firstName,lastName,contactNumber) VALUES (3,'G3','Third','Person','555-0000')");
+    let studentScanThrown = false;
+    try {
+      db.verifyGuardian(1, 'S1'); // using student barcode as guardian
+    } catch (e) {
+      studentScanThrown = true;
+    }
+    assert(studentScanThrown, 'should throw error when using student barcode as guardian');
+    const logs5 = db.db.exec('SELECT * FROM verification_logs')[0]?.values || [];
+    assert(logs5.length === 1, `should log failure for student-as-guardian, got ${logs5.length}`);
+    assert(logs5[0][5] === 'failure', 'status should be failure');
+    console.log('✓ Test 5.5 passed: Student QR used as guardian logged as failure');
+    
+    // Test 5.6: Empty barcode should still produce a logged failure
+    db.db.run('DELETE FROM verification_logs');
+    let emptyThrown = false;
+    try {
+      db.verifyGuardian(1, '');
+    } catch (e) {
+      emptyThrown = true;
+    }
+    assert(emptyThrown, 'should throw error when barcode is empty');
+    const logs6 = db.db.exec('SELECT * FROM verification_logs')[0]?.values || [];
+    assert(logs6.length === 1, `empty-barcode attempt should be logged, got ${logs6.length}`);
+    assert(logs6[0][5] === 'failure', 'status should be failure for empty barcode');
+    console.log('✓ Test 5.6 passed: Empty barcode logged as failure');
+  } catch (e) {
+    console.error('✗ Test Suite 5 encountered an error:', e.message);
+  }
+})();
+
 // Test Summary
 console.log('\n=== Test Summary ===');
 console.log('✓ All unit tests completed');
@@ -302,3 +399,5 @@ console.log('- JSON serialization/deserialization');
 console.log('- Match threshold validation (0.6)');
 console.log('- Edge cases and error handling');
 console.log('- Real-world similarity scenarios');
+console.log('- Database verification logging (face and barcode)');
+

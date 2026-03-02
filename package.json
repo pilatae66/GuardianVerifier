@@ -38,6 +38,8 @@
     "start": "npm run electron-dev",
     "dev": "npm run electron-dev",
     "test": "node tests/face.test.js",
+    "show-db-path": "node scripts/show-db-path.js",
+    "check-logs": "node scripts/check-logs.js",
     "validate-build": "node scripts/validate-build.js",
     "benchmark": "node scripts/benchmark.js",
     "test-build": "npm run react-build && npm run validate-build && npm run benchmark",

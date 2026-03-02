@@ -2,15 +2,15 @@
 
 ## Phase 1: Setup (Project Initialization)
 
-- [ ] T001 [P] Add `@vladmandic/face-api` dependency (use version ^1.7.15 since 1.8.x is unavailable) to package.json
-- [ ] T002 [P] Create `public/models/` directory and download face model files
+- [x] T001 [P] Add `@vladmandic/face-api` dependency (use version ^1.7.15 since 1.8.x is unavailable) to package.json
+- [x] T002 [P] Create `public/models/` directory and download face model files
 
 ## Phase 2: Foundational (Blocking Prerequisites)
 
-- [ ] T003 Update database schema in database.js: add `photo` TEXT and `faceDescriptor` TEXT columns to students and guardians tables
-- [ ] T004 [P] Implement `findStudentByFace(descriptor)` and `verifyGuardianByFace(studentId, descriptor)` methods in database.js; validate descriptor input (array length, numeric type) per Principle I security requirements
-- [ ] T005 [P] Add IPC handlers `find-student-by-face` and `verify-guardian-face` in public/electron.js
-- [ ] T006 Expose new IPC methods in public/preload.js via contextBridge
+- [x] T003 Update database schema in database.js: add `photo` TEXT and `faceDescriptor` TEXT columns to students and guardians tables
+- [x] T004 [P] Implement `findStudentByFace(descriptor)` and `verifyGuardianByFace(studentId, descriptor)` methods in database.js; validate descriptor input (array length, numeric type) per Principle I security requirements
+- [x] T005 [P] Add IPC handlers `find-student-by-face` and `verify-guardian-face` in public/electron.js
+- [x] T006 Expose new IPC methods in public/preload.js via contextBridge
 
 ## Phase 3: User Story 1 – Identify Student by Face (P1)
 
@@ -24,16 +24,28 @@
 
 ## Phase 5: User Story 3 – Enrollment (P2)
 
-- [ ] T010 [P] [US3] Update src/pages/StudentRegistration.js: support face capture from **either** uploaded photo **or** live camera; compute descriptor on form submit; include descriptor in registerStudent() IPC call
-- [ ] T011 [P] [US3] Update src/pages/GuardianRegistration.js: support face capture from **either** uploaded photo **or** live camera; compute descriptor on form submit; include descriptor in registerGuardian() IPC call
+- [x] T010 [P] [US3] Update src/pages/StudentRegistration.js: support face capture from **either** uploaded photo **or** live camera; compute descriptor on form submit; include descriptor in registerStudent() IPC call
+- [x] T011 [P] [US3] Update src/pages/GuardianRegistration.js: support face capture from **either** uploaded photo **or** live camera; compute descriptor on form submit; include descriptor in registerGuardian() IPC call
 
 ## Phase 6: Polish & Cross-Cutting Concerns
 
-- [ ] T012 [P] Add unit tests for face descriptor computation and L2 distance matching in database.js
-- [ ] T013 [P] Update README.md with face verification feature documentation and offline requirements
-- [ ] T014 Validate models directory exists in build artifact; update build.sh and build.bat
-- [ ] T015 Create quickstart guide for face enrollment workflow in FACE_QUICKSTART.md
-- [ ] T016 [P] Performance validation: benchmark face recognition (model load time, descriptor compute time, L2 distance lookup) and IPC round-trip latency; verify guardian verification completes within SC-002's 3-second target on target hardware
+- [X] T012 [P] Add unit tests for face descriptor computation and L2 distance matching in database.js
+- [X] T013 [P] Update README.md with face verification feature documentation and offline requirements
+- [X] T014 Validate models directory exists in build artifact; update build.sh and build.bat
+- [X] T015 Create quickstart guide for face enrollment workflow in FACE_QUICKSTART.md
+- [X] T016 [P] Performance validation: benchmark face recognition (model load time, descriptor compute time, L2 distance lookup) and IPC round-trip latency; verify guardian verification completes within SC-002's 3-second target on target hardware
+
+## Phase 7: Post-Implementation Fixes (2026-03-02)
+
+- [X] T017 [BUGFIX] Fix verification logging for failed attempts: remove premature validation, allow null/empty barcode to reach database layer for proper error logging
+- [X] T018 [BUGFIX] Fix verification logs display: change INNER JOIN to LEFT JOIN in getVerificationLogs() to include failed verifications with NULL guardianId
+- [X] T019 [BUGFIX] Fix case sensitivity mismatch: normalize status comparisons to lowercase in VerificationLogs.js (database uses 'success'/'failure', UI was checking 'SUCCESS'/'FAILED')
+- [X] T020 [ENHANCEMENT] Add NULL safety checks in VerificationLogs.js for guardian fields (firstName, lastName, barcode)
+- [X] T021 [ENHANCEMENT] Enforce userData path for production database, add logging to show exact database location
+- [X] T022 [UTILITY] Create npm scripts: show-db-path and check-logs for database introspection
+- [X] T023 [TEST] Add comprehensive unit tests for failed verification scenarios (unknown barcode, student-as-guardian, empty barcode, mismatches)
+- [X] T024 [UI] Implement consistent styling for failed verification status badge (red theme matching success green theme)
+- [X] T025 [UX] Auto-trigger guardian verification immediately after barcode scan (bypass React state batching)
 
 ---
 

@@ -68,6 +68,7 @@ export async function loadModels() {
     
     await Promise.all([
       faceApi.nets.ssdMobilenetv1.loadFromUri(modelPath),
+      faceApi.nets.tinyFaceDetector.loadFromUri(modelPath),        // faster lightweight detector
       faceApi.nets.faceLandmark68Net.loadFromUri(modelPath),
       faceApi.nets.faceRecognitionNet.loadFromUri(modelPath),
     ]);
@@ -106,7 +107,8 @@ export async function getDescriptorFromImage(imageElement, minConfidence = 0.5) 
 
     // Detect face and compute descriptor
     // NOTE: face-api options must be passed to detectSingleFace; withFaceDescriptor() takes no args
-    const options = new faceApi.SsdMobilenetv1Options({ minConfidence });
+// use tiny face detector for faster image processing
+          const options = new faceApi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: minConfidence });
     const detections = await faceApi
       .detectSingleFace(canvas, options)
       .withFaceLandmarks()
@@ -144,7 +146,11 @@ export async function getDescriptorFromCamera(timeoutMs = 10000, minConfidence =
       // Request camera access
       console.log('[face.js] Requesting camera access...');
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: 640, height: 480 },
+        video: { 
+          width: { ideal: 480 },  // Smaller for faster processing
+          height: { ideal: 360 },
+          frameRate: { ideal: 15 }
+        },
         audio: false,
       });
 
@@ -203,8 +209,8 @@ export async function getDescriptorFromCamera(timeoutMs = 10000, minConfidence =
 
       overlay.innerHTML = `
         <div style="text-align: center; background: rgba(0, 0, 0, 0.5); padding: 20px; border-radius: 8px;">
-          <p style="margin: 0 0 10px 0;">Position your face in the center</p>
-          <p style="margin: 0; font-size: 12px; color: #ddd;">Waiting for face detection...</p>
+          <p style="margin: 0 0 10px 0; font-size: 18px;">👤 Position your face in the center</p>
+          <p style="margin: 0; font-size: 12px; color: #ddd;">Camera ready - preparing detection...</p>
         </div>
         <button id="cancelBtn" style="
           position: absolute;
@@ -228,13 +234,14 @@ export async function getDescriptorFromCamera(timeoutMs = 10000, minConfidence =
       let captured = false;
       let cancelled = false;
       const startTime = Date.now();
+      let frameCount = 0;  // Throttle detection to every 2 frames
 
       // Cancel button handler
       document.getElementById('cancelBtn').addEventListener('click', () => {
         cancelled = true;
       });
 
-      // Detect face in video frames
+      // Detect face in video frames (throttled: run every 2 frames for faster processing)
       const detectFace = async () => {
         if (cancelled) {
           // Cleanup
@@ -251,31 +258,36 @@ export async function getDescriptorFromCamera(timeoutMs = 10000, minConfidence =
         }
 
         try {
-          // run detection on video frames
-          const options = new faceApi.SsdMobilenetv1Options({ minConfidence });
-          const detections = await faceApi
-            .detectSingleFace(video, options)
-            .withFaceLandmarks()
-            .withFaceDescriptor();
+          frameCount++;
+          // Run detection every frame (smaller resolution makes CPU usage acceptable now)
+          if (frameCount % 1 === 0) {
+            // run detection on video frames
+            // use tiny face detector for speed (smaller model)
+            const options = new faceApi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: minConfidence });
+            const detections = await faceApi
+              .detectSingleFace(video, options)
+              .withFaceLandmarks()
+              .withFaceDescriptor();
 
-          if (detections && detections.descriptor && !captured) {
-            captured = true;
-            descriptor = Array.from(detections.descriptor);
-            
-            // Update overlay to show success
-            overlay.innerHTML = `
-              <div style="text-align: center; background: rgba(76, 175, 80, 0.7); padding: 20px; border-radius: 8px;">
-                <p style="margin: 0; font-size: 18px; color: white;">✓ Face captured successfully!</p>
-              </div>
-            `;
-            
-            // Wait a moment before cleanup to show success message
-            setTimeout(() => {
-              stream.getTracks().forEach(track => track.stop());
-              container.remove();
-              resolve(descriptor);
-            }, 500);
-            return;
+            if (detections && detections.descriptor && !captured) {
+              captured = true;
+              descriptor = Array.from(detections.descriptor);
+              
+              // Update overlay to show success
+              overlay.innerHTML = `
+                <div style="text-align: center; background: rgba(76, 175, 80, 0.7); padding: 20px; border-radius: 8px;">
+                  <p style="margin: 0; font-size: 18px; color: white;">✓ Face captured successfully!</p>
+                </div>
+              `;
+              
+              // Wait a moment before cleanup to show success message
+              setTimeout(() => {
+                stream.getTracks().forEach(track => track.stop());
+                container.remove();
+                resolve(descriptor);
+              }, 500);
+              return;
+            }
           }
 
           // Continue detecting
@@ -288,8 +300,54 @@ export async function getDescriptorFromCamera(timeoutMs = 10000, minConfidence =
 
       // Start detection when video is ready
       video.addEventListener('loadedmetadata', () => {
-        console.log('[face.js] Camera stream ready, starting face detection...');
-        detectFace();
+        console.log('[face.js] Camera stream ready, delaying detection 1s');
+        // show overlay countdown
+        overlay.innerHTML = `
+          <div style="text-align: center; background: rgba(0, 0, 0, 0.5); padding: 20px; border-radius: 8px;">
+            <p style="margin: 0 0 10px 0; font-size: 18px;">👤 Position your face</p>
+            <p style="margin: 0; font-size: 12px; color: #ddd;">Detecting in 1 second...</p>
+          </div>
+          <button id="cancelBtn" style="
+            position: absolute;
+            bottom: 20px;
+            padding: 10px 20px;
+            background: #f44336;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            font-size: 14px;
+            cursor: pointer;
+          ">Cancel</button>
+        `;
+        // Re-attach cancel listener in case button recreated
+        document.getElementById('cancelBtn').addEventListener('click', () => {
+          cancelled = true;
+        });
+        // start detection after 1 second
+        setTimeout(() => {
+          console.log('[face.js] Starting face detection...');
+          overlay.innerHTML = `
+            <div style="text-align: center; background: rgba(0, 0, 0, 0.5); padding: 20px; border-radius: 8px;">
+              <p style="margin: 0 0 10px 0;">👤 Detecting face...</p>
+              <p style="margin: 0; font-size: 12px; color: #ddd;">Keep your face in frame</p>
+            </div>
+            <button id="cancelBtn" style="
+              position: absolute;
+              bottom: 20px;
+              padding: 10px 20px;
+              background: #f44336;
+              color: white;
+              border: none;
+              border-radius: 4px;
+              font-size: 14px;
+              cursor: pointer;
+            ">Cancel</button>
+          `;
+          document.getElementById('cancelBtn').addEventListener('click', () => {
+            cancelled = true;
+          });
+          detectFace();
+        }, 1000);
       });
 
     } catch (error) {
