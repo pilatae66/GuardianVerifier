@@ -29,13 +29,14 @@ function VerificationLogs() {
   };
 
   const filteredLogs = logs.filter((log) => {
-    if (filter === 'success') return log.verificationStatus === 'SUCCESS';
-    if (filter === 'failed') return log.verificationStatus === 'FAILED';
+    const status = (log.verificationStatus || '').toLowerCase();
+    if (filter === 'success') return status === 'success';
+    if (filter === 'failed') return status === 'failure';
     return true;
   });
 
-  const successCount = logs.filter((l) => l.verificationStatus === 'SUCCESS').length;
-  const failedCount = logs.filter((l) => l.verificationStatus === 'FAILED').length;
+  const successCount = logs.filter((l) => (l.verificationStatus || '').toLowerCase() === 'success').length;
+  const failedCount = logs.filter((l) => (l.verificationStatus || '').toLowerCase() === 'failure').length;
   const successRate = logs.length > 0 ? Math.round((successCount / logs.length) * 100) : 0;
 
   const handlePrintLogs = () => {
@@ -74,14 +75,16 @@ function VerificationLogs() {
               <th>Guardian</th>
               <th>Status</th>
             </tr>
-            ${filteredLogs.map((log) => `
-              <tr class="${log.verificationStatus.toLowerCase()}">
+            ${filteredLogs.map((log) => {
+              const status = (log.verificationStatus || 'unknown').toLowerCase();
+              return `
+              <tr class="${status}">
                 <td>${new Date(log.verificationTime).toLocaleString()}</td>
                 <td>${log.studentFirstName} ${log.studentLastName}</td>
-                <td>${log.guardianFirstName} ${log.guardianLastName}</td>
-                <td>${log.verificationStatus}</td>
+                <td>${log.guardianFirstName || 'Unknown'} ${log.guardianLastName || ''}</td>
+                <td>${status.charAt(0).toUpperCase() + status.slice(1)}</td>
               </tr>
-            `).join('')}
+            `}).join('')}
           </table>
 
           <div class="footer">
@@ -147,8 +150,11 @@ function VerificationLogs() {
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredLogs.map((log, index) => (
-                      <tr key={index} className={`status-${log.verificationStatus.toLowerCase()}`}>
+                    {filteredLogs.map((log, index) => {
+                      const status = (log.verificationStatus || 'unknown').toLowerCase();
+                      const statusDisplay = status.charAt(0).toUpperCase() + status.slice(1);
+                      return (
+                      <tr key={index} className={`status-${status}`}>
                         <td>{new Date(log.verificationTime).toLocaleString()}</td>
                         <td>
                           <div className="name">
@@ -158,17 +164,18 @@ function VerificationLogs() {
                         </td>
                         <td>
                           <div className="name">
-                            {log.guardianFirstName} {log.guardianLastName}
+                            {log.guardianFirstName || 'Unknown'} {log.guardianLastName || ''}
                           </div>
-                          <small>{log.guardianBarcode}</small>
+                          <small>{log.guardianBarcode || 'N/A'}</small>
                         </td>
                         <td>
-                          <span className={`status-badge ${log.verificationStatus.toLowerCase()}`}>
-                            {log.verificationStatus}
+                          <span className={`status-badge ${status}`}>
+                            {statusDisplay}
                           </span>
                         </td>
                       </tr>
-                    ))}
+                    );
+                    })}
                   </tbody>
                 </table>
               </div>

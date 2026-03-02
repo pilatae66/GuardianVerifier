@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { v4 as uuidv4 } from 'uuid';
+import * as FaceUtil from '../utils/face';
 import './StudentRegistration.css';
 
 function StudentRegistration() {
@@ -12,6 +13,10 @@ function StudentRegistration() {
   });
   const [photo, setPhoto] = useState(null);
   const [photoPreview, setPhotoPreview] = useState(null);
+  const [photoMode, setPhotoMode] = useState('upload'); // 'upload' or 'camera'
+  const [faceDescriptor, setFaceDescriptor] = useState(null);
+  const [modelsLoaded, setModelsLoaded] = useState(false);
+  const [faceDetectionStatus, setFaceDetectionStatus] = useState('');
   const [croppingMode, setCroppingMode] = useState(false);
   const [croppedPhoto, setCroppedPhoto] = useState(null);
   const [cropPosition, setCropPosition] = useState({ x: 0, y: 0 });
@@ -28,7 +33,20 @@ function StudentRegistration() {
 
   React.useEffect(() => {
     loadGuardians();
+    loadFaceModels();
   }, []);
+
+  const loadFaceModels = async () => {
+    try {
+      await FaceUtil.loadModels();
+      setModelsLoaded(true);
+    } catch (err) {
+      console.error('Error loading face models:', err);
+      setModelsLoaded(false);
+      // errors here can be due to missing files or TF backend issues; face features
+      // will be disabled until models load successfully
+    }
+  };
 
   React.useEffect(() => {
     const cropPreview = document.querySelector('.crop-preview');
@@ -55,6 +73,43 @@ function StudentRegistration() {
     }
   };
 
+  const handleStudentFaceScan = async () => {
+    if (!modelsLoaded) {
+      setError('Face models not loaded. Please refresh the page.');
+      return;
+    }
+
+    try {
+      setFaceDetectionStatus('Initializing camera...');
+      setError('');
+      const descriptor = await FaceUtil.getDescriptorFromCamera(10000, 0.5);
+      
+      if (descriptor) {
+        setFaceDescriptor(descriptor);
+        setPhotoMode('camera');
+        setFaceDetectionStatus('Face scanned successfully!');
+        // Clear preview after a short delay
+        setTimeout(() => setFaceDetectionStatus(''), 2000);
+      }
+    } catch (err) {
+      console.error('Face scan error:', err);
+      let errorMsg = 'Face scan failed. ';
+      
+      if (err.message.includes('camera')) {
+        errorMsg = 'Camera access denied. Please grant camera permissions in settings.';
+      } else if (err.message.includes('timeout')) {
+        errorMsg = 'Face detection timeout. Ensure good lighting and try again.';
+      } else if (err.message.includes('no camera')) {
+        errorMsg = 'No camera found. Please connect a camera or use photo upload.';
+      } else {
+        errorMsg += err.message;
+      }
+      
+      setError(errorMsg);
+      setFaceDetectionStatus('');
+    }
+  };
+
   const handleInputChange = (e) => {
     const { name, value } = e.target;
     setFormData((prev) => ({
@@ -63,16 +118,46 @@ function StudentRegistration() {
     }));
   };
 
-  const handlePhotoChange = (e) => {
+  const handlePhotoChange = async (e) => {
     const file = e.target.files[0];
     if (file) {
       setPhoto(file);
       const reader = new FileReader();
-      reader.onloadend = () => {
+      reader.onloadend = async () => {
         setPhotoPreview(reader.result);
         setCroppingMode(true);
         setCroppedPhoto(null);
         setCropPosition({ x: 0, y: 0 });
+        
+        // Try to compute face descriptor from uploaded image
+        if (modelsLoaded) {
+          try {
+            setFaceDetectionStatus('Detecting face in uploaded photo...');
+            // Create an image element and convert to canvas
+            const img = new Image();
+            img.onload = async () => {
+              const canvas = document.createElement('canvas');
+              canvas.width = img.width;
+              canvas.height = img.height;
+              const ctx = canvas.getContext('2d');
+              ctx.drawImage(img, 0, 0);
+              
+              const descriptor = await FaceUtil.getDescriptorFromImage(canvas, 0.5);
+              if (descriptor) {
+                setFaceDescriptor(descriptor);
+                setFaceDetectionStatus('Face detected in photo!');
+                setTimeout(() => setFaceDetectionStatus(''), 2000);
+              } else {
+                setFaceDetectionStatus('No face detected in photo.');
+                setTimeout(() => setFaceDetectionStatus(''), 3000);
+              }
+            };
+            img.src = reader.result;
+          } catch (err) {
+            console.error('Error computing descriptor:', err);
+            setFaceDetectionStatus('');
+          }
+        }
       };
       reader.readAsDataURL(file);
     }
@@ -138,9 +223,9 @@ function StudentRegistration() {
     setIsDragging(false);
   };
 
-  const handleCropPhoto = () => {
+  const handleCropPhoto = async () => {
     const img = new Image();
-    img.onload = () => {
+    img.onload = async () => {
       const originalWidth = img.width;
       const originalHeight = img.height;
       const cropSize = 200; // Fixed crop size in final image
@@ -187,6 +272,28 @@ function StudentRegistration() {
       const croppedData = canvas.toDataURL('image/jpeg');
       setCroppedPhoto(croppedData);
       setCroppingMode(false);
+      
+      // Try to compute descriptor from cropped image
+      if (modelsLoaded && faceDescriptor === null) {
+        try {
+          const croppedCanvas = document.createElement('canvas');
+          const croppedImg = new Image();
+          croppedImg.onload = async () => {
+            croppedCanvas.width = croppedImg.width;
+            croppedCanvas.height = croppedImg.height;
+            const croppedCtx = croppedCanvas.getContext('2d');
+            croppedCtx.drawImage(croppedImg, 0, 0);
+            
+            const descriptor = await FaceUtil.getDescriptorFromImage(croppedCanvas, 0.5);
+            if (descriptor) {
+              setFaceDescriptor(descriptor);
+            }
+          };
+          croppedImg.src = croppedData;
+        } catch (err) {
+          console.error('Error computing descriptor from cropped image:', err);
+        }
+      }
     };
     
     const canvas = document.createElement('canvas');
@@ -215,8 +322,16 @@ function StudentRegistration() {
       }));
     }
     
-    if (!barcodeValue || !formData.firstName || !formData.lastName || !formData.dateOfBirth || !formData.guardianId || !photo) {
-      setError('Please fill in all fields including photo');
+    // Require basic info plus either photo or face descriptor
+    if (
+      !barcodeValue ||
+      !formData.firstName ||
+      !formData.lastName ||
+      !formData.dateOfBirth ||
+      !formData.guardianId ||
+      (!photo && !faceDescriptor)
+    ) {
+      setError('Please fill in all required fields and provide a photo or scan a face');
       return;
     }
 
@@ -232,10 +347,14 @@ function StudentRegistration() {
         dateOfBirth: formData.dateOfBirth,
         guardianId: parseInt(formData.guardianId),
         photo: croppedPhoto || photoPreview,
+        faceDescriptor: faceDescriptor ? FaceUtil.serializeDescriptor(faceDescriptor) : null, // Serialize if available
       });
 
       if (result.success) {
-        setSuccess('Student registered successfully!');
+        const successMsg = faceDescriptor 
+          ? 'Student registered successfully with face recognition!'
+          : 'Student registered successfully!';
+        setSuccess(successMsg);
         setFormData({
           barcode: '',
           firstName: '',
@@ -248,6 +367,8 @@ function StudentRegistration() {
         setCroppedPhoto(null);
         setCroppingMode(false);
         setGenerateBarcode(false);
+        setFaceDescriptor(null);
+        setPhotoMode('upload');
         setTimeout(() => setSuccess(''), 3000);
       } else {
         setError(result.error || 'Registration failed');
@@ -272,17 +393,71 @@ function StudentRegistration() {
       <div className="registration-form-wrapper">
         <form onSubmit={handleSubmit} className="registration-form">
           <div className="form-section">
-            <h2>Photo Upload</h2>
+            <h2>Photo or Face Capture</h2>
             
-            <div className="form-group">
-              <label htmlFor="photo">Photo (2x2 Square) *</label>
-              <input
-                type="file"
-                id="photo"
-                accept="image/*"
-                onChange={handlePhotoChange}
-              />
-            </div>
+            {faceDetectionStatus && (
+              <div className="alert alert-info">
+                {faceDetectionStatus}
+              </div>
+            )}
+
+            {!faceDescriptor && (
+              <div className="mode-selection" style={{ marginBottom: '20px' }}>
+                <button
+                  type="button"
+                  className={`btn ${photoMode === 'camera' ? 'btn-primary' : 'btn-secondary'}`}
+                  onClick={() => {
+                    handleStudentFaceScan();
+                  }}
+                  disabled={!modelsLoaded || loading}
+                >
+                  📷 Capture Face
+                </button>
+                <span style={{ margin: '0 10px', color: '#666' }}>or</span>
+                <button
+                  type="button"
+                  className={`btn ${photoMode === 'upload' ? 'btn-primary' : 'btn-secondary'}`}
+                  onClick={() => setPhotoMode('upload')}
+                  disabled={loading}
+                >
+                  📤 Upload Photo
+                </button>
+              </div>
+            )}
+
+            {faceDescriptor && (
+              <div style={{ marginBottom: '20px', padding: '10px', backgroundColor: '#d4edda', border: '1px solid #c3e6cb', borderRadius: '4px' }}>
+                <p style={{ margin: '0', color: '#155724', fontSize: '14px' }}>
+                  ✓ Face descriptor captured successfully!
+                </p>
+                <button
+                  type="button"
+                  className="btn btn-tertiary btn-small"
+                  onClick={() => {
+                    setFaceDescriptor(null);
+                    setPhotoMode('upload');
+                    setPhoto(null);
+                    setPhotoPreview(null);
+                    setCroppedPhoto(null);
+                  }}
+                  style={{ marginTop: '8px' }}
+                >
+                  Recapture Face
+                </button>
+              </div>
+            )}
+            
+            {photoMode === 'upload' && (
+              <div className="form-group">
+                <label htmlFor="photo">Photo (2x2 Square) *</label>
+                <input
+                  type="file"
+                  id="photo"
+                  accept="image/*"
+                  onChange={handlePhotoChange}
+                />
+              </div>
+            )}
 
             {croppingMode && photoPreview && (
               <div className="cropping-container">
